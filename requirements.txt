@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-flask
-flask-cors
 joblib
 pandas
 scikit-learn
 numpy
 openpyxl
+groq
+python-dotenv
