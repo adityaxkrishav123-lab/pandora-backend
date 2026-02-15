@@ -1,17 +1,18 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import os
 import joblib
 import pandas as pd
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from groq import Groq
 from dotenv import load_dotenv
 
+# Load keys from the .env file we just made
 load_dotenv()
 
 app = FastAPI()
 
-# 🛡️ CORS Policy
+# 🛡️ Enable Dashboard to talk to Backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,9 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🧠 GROQ CLIENT (Set your GROQ_API_KEY in environment variables)
+# 🧠 Friday's Brain Setup
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
 MODEL_PATH = "demand_forecaster.pkl"
 
 class PredictionInput(BaseModel):
@@ -33,51 +33,48 @@ class PredictionInput(BaseModel):
 @app.post("/predict")
 async def predict(data: PredictionInput):
     forecast = 0.0
-    mode = ""
+    engine_source = ""
 
-    # 1. 🔍 STEP 1: CALCULATE THE RAW FORECAST
+    # --- STEP 1: RUN THE MODEL (.pkl) ---
     if os.path.exists(MODEL_PATH):
-        model = joblib.load(MODEL_PATH)
-        # Assuming model was trained on [consumption, current_stock, min_required]
-        input_df = pd.DataFrame([[data.consumption, data.current_stock, data.min_required]])
-        prediction = model.predict(input_df)
-        forecast = float(prediction[0])
-        mode = "REAL_AI (.pkl)"
+        try:
+            model = joblib.load(MODEL_PATH)
+            # Create the exact dataframe your model expects
+            # Ensure column names match what you used in training
+            input_data = pd.DataFrame([[data.consumption, data.current_stock, data.min_required]], 
+                                     columns=['consumption', 'current_stock', 'min_required'])
+            prediction = model.predict(input_data)
+            forecast = float(prediction[0])
+            engine_source = "Neural Model (.pkl)"
+        except Exception as e:
+            print(f"Model Error: {e}")
+            forecast = data.consumption * 1.2 # Safety fallback
+            engine_source = "Safety Fallback"
     else:
+        # If model is missing, use "Smart Heuristics"
         forecast = data.consumption * 1.15
-        mode = "MOCK_LOGIC (Heuristic)"
+        engine_source = "Heuristic Logic"
 
-    # 2. ⚡ STEP 2: CONSULT LLAMA-3 (GROQ) FOR INSIGHTS
+    # --- STEP 2: GET FRIDAY'S ADVICE (Llama-3) ---
     try:
-        chat_completion = client.chat.completions.create(
+        chat = client.chat.completions.create(
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are Friday, an expert industrial AI assistant. Give a concise, 1-sentence tactical recommendation based on inventory data."
-                },
-                {
-                    "role": "user",
-                    "content": f"Item: {data.item_name}. Stock: {data.current_stock}. Forecast: {forecast}. Min Required: {data.min_required}."
-                }
+                {"role": "system", "content": "You are Friday, a sharp industrial AI assistant. Give 1 tactical sentence based on these numbers."},
+                {"role": "user", "content": f"Item: {data.item_name}. Stock: {data.current_stock}. Forecasted: {forecast}. Min: {data.min_required}."}
             ],
             model="llama3-8b-8192",
         )
-        friday_insight = chat_completion.choices[0].message.content
-    except Exception as e:
-        friday_insight = "Neural Link to Llama-3 unstable. Proceed with manual verification."
+        advice = chat.choices[0].message.content
+    except:
+        advice = "Proceed with caution. Check supplier lead times."
 
     return {
         "item": data.item_name,
-        "forecasted_demand": round(forecast, 2),
-        "friday_recommendation": friday_insight,
-        "engine_mode": mode,
-        "status": "Operational"
+        "forecast": round(forecast, 2),
+        "friday_advice": advice,
+        "engine": engine_source
     }
 
 @app.get("/")
-def health():
-    return {
-        "status": "Friday Online",
-        "local_model": os.path.exists(MODEL_PATH),
-        "llama3_enabled": os.environ.get("GROQ_API_KEY") is not None
-    })}
+def home():
+    return {"status": "Friday Online", "brain": "Llama-3-8B", "model_found": os.path.exists(MODEL_PATH)}
